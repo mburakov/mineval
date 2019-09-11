@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
   int result = EXIT_FAILURE;
   do {
     if (argc < 2) {
-      fprintf(stderr, "Usage: %s [expr]\n", argv[0]);
+      if (DumpMsgPack(stdin, stdout)) result = EXIT_SUCCESS;
       break;
     }
     if (!(stream = ConnectNvim())) break;
