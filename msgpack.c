@@ -15,9 +15,82 @@
  * along with mineval.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <stdint.h>
 #include <stdio.h>
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 int DumpMsgPack(FILE* from, FILE* to);
+
+static int DumpMap(FILE* from, FILE* to, size_t size) {
+  if (putc('{', to) == EOF) {
+    perror("Failed to write opening bracket");
+    return 0;
+  }
+  while (size-- > 0) {
+    int result = DumpMsgPack(from, to);
+    if (!result) return 0;
+    if (putc(':', to) == EOF) {
+      perror("Failed to write semicolon");
+      return 0;
+    }
+    result = DumpMsgPack(from, to);
+    if (!result) return 0;
+    if (size && putc(',', to) == EOF) {
+      perror("Failed to write comma");
+      return 0;
+    }
+  }
+  if (putc('}', to) == EOF) {
+    perror("Failed to write closing bracket");
+    return 0;
+  }
+  return 1;
+}
+
+static int DumpArray(FILE* from, FILE* to, size_t size) {
+  if (putc('[', to) == EOF) {
+    perror("Failed to write opening bracket");
+    return 0;
+  }
+  while (size-- > 0) {
+    int result = DumpMsgPack(from, to);
+    if (!result) return 0;
+    if (size && putc(',', to) == EOF) {
+      perror("Failed to write comma");
+      return 0;
+    }
+  }
+  if (putc(']', to) == EOF) {
+    perror("Failed to write closing bracket");
+    return 0;
+  }
+  return 1;
+}
+
+static int DumpString(FILE* from, FILE* to, size_t size) {
+  if (putc('"', to) == EOF) {
+    perror("Failed to write opening quote");
+    return 0;
+  }
+  for (char buffer[256]; size;) {
+    size_t count = MIN(sizeof(buffer), size);
+    if (!fread(buffer, count, 1, from)) {
+      perror("Failed to read string");
+      return 0;
+    }
+    if (!fwrite(buffer, count, 1, to)) {
+      perror("Failed to write string");
+      return 0;
+    }
+    size -= count;
+  }
+  if (putc('"', to) == EOF) {
+    perror("Failed to write closing quote");
+    return 0;
+  }
+  return 1;
+}
 
 #define FIXED(name, string)                           \
   static int name(FILE* from, FILE* to) {             \
@@ -62,13 +135,27 @@ NOIMPL(OnFixExt2)
 NOIMPL(OnFixExt4)
 NOIMPL(OnFixExt8)
 NOIMPL(OnFixExt16)
-NOIMPL(OnStr8)
-NOIMPL(OnStr16)
-NOIMPL(OnStr32)
-NOIMPL(OnArray16)
-NOIMPL(OnArray32)
-NOIMPL(OnMap16)
-NOIMPL(OnMap32)
+
+#define SIZED(name, impl, size)                   \
+  static int name(FILE* from, FILE* to) {         \
+    uint8_t buffer[size];                         \
+    if (!fread(buffer, size, 1, from)) {          \
+      perror("Failed to read items count");       \
+      return 0;                                   \
+    }                                             \
+    size_t count = 0;                             \
+    for (size_t index = 0; index < size; ++index) \
+      count = count << 8 | buffer[index];         \
+    return impl(from, to, count);                 \
+  }
+
+SIZED(OnStr8, DumpString, 1)
+SIZED(OnStr16, DumpString, 2)
+SIZED(OnStr32, DumpString, 4)
+SIZED(OnArray16, DumpArray, 2)
+SIZED(OnArray32, DumpArray, 4)
+SIZED(OnMap16, DumpMap, 2)
+SIZED(OnMap32, DumpMap, 4)
 
 static int (*const kHandlers[])(FILE*, FILE*) = {
     OnNil,     NULL,      OnFalse,   OnTrue,     OnBin8,    OnBin16, OnBin32,
@@ -78,10 +165,21 @@ static int (*const kHandlers[])(FILE*, FILE*) = {
     OnArray16, OnArray32, OnMap16,   OnMap32};
 
 int DumpMsgPack(FILE* from, FILE* to) {
-  int prefix = fgetc(from);
-  if (prefix == -1) return 0;
-  if (0xc0 <= prefix && prefix <= 0xdf)
-    return (*kHandlers[prefix - 0xc0])(from, to);
-  // TODO: Implement immediate fixtypes
-  return 0;
+  int prefix = getc(from);
+  if (prefix == EOF) {
+    perror("Failed to read prefix");
+    return 0;
+  }
+  if (prefix <= 0x7f) {
+    int result = fprintf(to, "%u", prefix) > 0;
+    if (!result) perror("Failed to write positive fixint");
+    return result;
+  }
+  if (prefix <= 0x8f) return DumpMap(from, to, prefix & 0x0f);
+  if (prefix <= 0x9f) return DumpArray(from, to, prefix & 0x0f);
+  if (prefix <= 0xbf) return DumpString(from, to, prefix & 0x1f);
+  if (prefix <= 0xdf) return (*kHandlers[prefix - 0xc0])(from, to);
+  int result = fprintf(to, "%d", ~0 & prefix) > 0;
+  if (!result) perror("Failed to write negative fixint");
+  return result;
 }
