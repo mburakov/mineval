@@ -24,6 +24,18 @@ function cd() {
     builtin cd "$@" &&
         test -n "$NVIM_LISTEN_ADDRESS" &&
         mineval "nvim_command(':tcd $PWD')" > /dev/null
+}
+```
+
+Prevent neovim being accidentally opened from neovim terminal:
+```
+# Add following to the end of your .bashrc:
+
+function nvim() {
+    test -n "$NVIM_LISTEN_ADDRESS" &&
+        mineval "nvim_command(':e $@')" > /dev/null ||
+        $(which nvim) "$@"
+}
 ```
 
 Or just use it as a weird calculator:
