@@ -28,7 +28,7 @@ int DumpMsgPack(FILE* from, FILE* to);
 static FILE* ConnectNvim() {
   int sock = -1;
   do {
-    char* env = getenv("NVIM_LISTEN_ADDRESS");
+    char* env = getenv("NVIM");
     if (!env) {
       fprintf(stderr, "Not running in nvim\n");
       break;
